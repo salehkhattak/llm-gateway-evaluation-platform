@@ -1,0 +1,13 @@
+flowchart TD
+    A[FastAPI API Gateway] --> B[OpenRouter API]
+    B --> C[Model A]
+    B --> D[Model B]
+    B --> E[Model C]
+    C --> F[Evaluation Pipeline]
+    D --> F
+    E --> F
+    F --> G[(PostgreSQL)]
+    A --> H[Prometheus Metrics]
+    H --> I[Grafana Dashboard]
+    F --> H
+    B --> J[Provider Routing / Failover]

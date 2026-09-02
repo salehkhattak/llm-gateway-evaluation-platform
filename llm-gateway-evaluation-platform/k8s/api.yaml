@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: Secret
+metadata: {name: llm-gateway-secrets, namespace: llm-platform}
+type: Opaque
+stringData:
+  OPENROUTER_API_KEY: replace-me
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: llm-gateway, namespace: llm-platform}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: llm-gateway}}
+  template:
+    metadata: {labels: {app: llm-gateway}}
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/your-user/llm-gateway:latest
+          ports: [{containerPort: 8000}]
+          env:
+            - {name: OPENROUTER_API_KEY, valueFrom: {secretKeyRef: {name: llm-gateway-secrets, key: OPENROUTER_API_KEY}}}
+            - {name: DATABASE_URL, value: postgresql+psycopg://llm:llm@postgres:5432/llm_gateway}
+            - {name: DEFAULT_MODEL, value: openrouter/free}
+            - {name: EVALUATION_MODEL, value: openai/gpt-5.5}
+          readinessProbe:
+            httpGet: {path: /health, port: 8000}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /health, port: 8000}
+            initialDelaySeconds: 10
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata: {name: llm-gateway, namespace: llm-platform}
+spec:
+  selector: {app: llm-gateway}
+  ports: [{port: 8000, targetPort: 8000}]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: llm-gateway
+  namespace: llm-platform
+spec:
+  rules:
+    - host: llm-gateway.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: llm-gateway
+                port: {number: 8000}

@@ -1,0 +1,129 @@
+# Single-file deployment for a Kubernetes cluster.
+# Update the image and OpenRouter secret before applying.
+apiVersion: v1
+kind: Namespace
+metadata: {name: llm-platform}
+---
+apiVersion: v1
+kind: Secret
+metadata: {name: llm-gateway-secrets, namespace: llm-platform}
+type: Opaque
+stringData:
+  OPENROUTER_API_KEY: replace-me
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: llm-gateway-config, namespace: llm-platform}
+data:
+  DATABASE_URL: postgresql+psycopg://llm:llm@postgres:5432/llm_gateway
+  DEFAULT_MODEL: openrouter/free
+  EVALUATION_MODEL: openai/gpt-5.5
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: postgres, namespace: llm-platform}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: postgres}}
+  template:
+    metadata: {labels: {app: postgres}}
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17
+          env:
+            - {name: POSTGRES_DB, value: llm_gateway}
+            - {name: POSTGRES_USER, value: llm}
+            - {name: POSTGRES_PASSWORD, value: llm}
+          ports: [{containerPort: 5432}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: postgres, namespace: llm-platform}
+spec:
+  selector: {app: postgres}
+  ports: [{port: 5432, targetPort: 5432}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: llm-gateway, namespace: llm-platform}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: llm-gateway}}
+  template:
+    metadata: {labels: {app: llm-gateway}}
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/your-user/llm-gateway:latest
+          imagePullPolicy: Always
+          envFrom: [{configMapRef: {name: llm-gateway-config}}]
+          env:
+            - {name: OPENROUTER_API_KEY, valueFrom: {secretKeyRef: {name: llm-gateway-secrets, key: OPENROUTER_API_KEY}}}
+          ports: [{containerPort: 8000}]
+          readinessProbe: {httpGet: {path: /health, port: 8000}, initialDelaySeconds: 5, periodSeconds: 10}
+          livenessProbe: {httpGet: {path: /health, port: 8000}, initialDelaySeconds: 10, periodSeconds: 20}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: llm-gateway, namespace: llm-platform}
+spec:
+  selector: {app: llm-gateway}
+  ports: [{port: 8000, targetPort: 8000}]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: prometheus-config, namespace: llm-platform}
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+    scrape_configs:
+      - job_name: llm-gateway
+        static_configs:
+          - targets: ['llm-gateway:8000']
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: prometheus, namespace: llm-platform}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: prometheus}}
+  template:
+    metadata: {labels: {app: prometheus}}
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.5.0
+          args: ["--config.file=/etc/prometheus/prometheus.yml"]
+          volumeMounts: [{name: config, mountPath: /etc/prometheus}]
+          ports: [{containerPort: 9090}]
+      volumes: [{name: config, configMap: {name: prometheus-config}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: prometheus, namespace: llm-platform}
+spec:
+  selector: {app: prometheus}
+  ports: [{port: 9090, targetPort: 9090}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: grafana, namespace: llm-platform}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: grafana}}
+  template:
+    metadata: {labels: {app: grafana}}
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:12.1.1
+          ports: [{containerPort: 3000}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: grafana, namespace: llm-platform}
+spec:
+  selector: {app: grafana}
+  ports: [{port: 3000, targetPort: 3000}]
